@@ -13,14 +13,17 @@ export default function CreateListingPage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (values: ListingFormValues) => {
+  const handleSubmit = async (values: ListingFormValues) => {
     setLoading(true);
-    createListing({
-      ...values,
-      createdBy: user ? user.name : 'Unknown',
-    });
-    setLoading(false);
-    navigate('/dashboard');
+    try {
+      await createListing({
+        ...values,
+        createdBy: user ? user.name : 'Unknown',
+      });
+      navigate('/dashboard');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

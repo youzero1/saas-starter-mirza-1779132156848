@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, Search, Filter } from 'lucide-react';
+import { PlusCircle, Search, Filter, Database } from 'lucide-react';
 import { useListings } from '@/hooks/useListings';
 import ListingCard from '@/components/listings/ListingCard';
 import CategoryBadge from '@/components/listings/CategoryBadge';
@@ -14,7 +14,7 @@ const ALL = 'All';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { listings, deleteListing } = useListings();
+  const { listings, dbReady, deleteListing } = useListings();
 
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<JobCategory | typeof ALL>(ALL);
@@ -34,12 +34,15 @@ export default function DashboardPage() {
     });
   }, [listings, search, activeCategory, activeStatus]);
 
-  const stats = useMemo(() => ({
-    total: listings.length,
-    open: listings.filter((l) => l.status === 'Open').length,
-    draft: listings.filter((l) => l.status === 'Draft').length,
-    closed: listings.filter((l) => l.status === 'Closed').length,
-  }), [listings]);
+  const stats = useMemo(
+    () => ({
+      total: listings.length,
+      open: listings.filter((l) => l.status === 'Open').length,
+      draft: listings.filter((l) => l.status === 'Draft').length,
+      closed: listings.filter((l) => l.status === 'Closed').length,
+    }),
+    [listings]
+  );
 
   const handleDelete = (id: string) => setDeleteId(id);
   const confirmDelete = () => {
@@ -55,10 +58,20 @@ export default function DashboardPage() {
           <h1 className={styles.pageTitle}>Job Listings</h1>
           <p className={styles.pageSubtitle}>Manage all internal job postings</p>
         </div>
-        <button className={styles.newBtn} onClick={() => navigate('/listings/new')}>
-          <PlusCircle size={16} />
-          Post a Job
-        </button>
+        <div className={styles.headerRight}>
+          <div className={styles.dbBadge}>
+            <Database size={13} />
+            <span>{dbReady ? 'IndexedDB connected' : 'Connecting…'}</span>
+            <span
+              className={styles.dbDot}
+              style={{ background: dbReady ? 'var(--color-success)' : 'var(--color-text-muted)' }}
+            />
+          </div>
+          <button className={styles.newBtn} onClick={() => navigate('/listings/new')}>
+            <PlusCircle size={16} />
+            Post a Job
+          </button>
+        </div>
       </div>
 
       {/* Stats row */}
@@ -70,7 +83,9 @@ export default function DashboardPage() {
           { label: 'Closed', value: stats.closed, color: 'var(--color-danger)' },
         ].map((s) => (
           <div key={s.label} className={styles.statCard}>
-            <span className={styles.statValue} style={{ color: s.color }}>{s.value}</span>
+            <span className={styles.statValue} style={{ color: s.color }}>
+              {s.value}
+            </span>
             <span className={styles.statLabel}>{s.label}</span>
           </div>
         ))}
@@ -93,11 +108,15 @@ export default function DashboardPage() {
           <select
             className={styles.filterSelect}
             value={activeStatus}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setActiveStatus(e.target.value as JobStatus | typeof ALL)}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setActiveStatus(e.target.value as JobStatus | typeof ALL)
+            }
           >
             <option value={ALL}>All Statuses</option>
             {JOB_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
         </div>
@@ -106,7 +125,9 @@ export default function DashboardPage() {
       {/* Category tabs */}
       <div className={styles.categoryTabs}>
         <button
-          className={`${styles.catTab} ${activeCategory === ALL ? styles.catTabActive : ''}`}
+          className={`${styles.catTab} ${
+            activeCategory === ALL ? styles.catTabActive : ''
+          }`}
           onClick={() => setActiveCategory(ALL)}
         >
           All
@@ -114,7 +135,9 @@ export default function DashboardPage() {
         {JOB_CATEGORIES.map((cat) => (
           <button
             key={cat}
-            className={`${styles.catTab} ${activeCategory === cat ? styles.catTabActive : ''}`}
+            className={`${styles.catTab} ${
+              activeCategory === cat ? styles.catTabActive : ''
+            }`}
             onClick={() => setActiveCategory(cat)}
           >
             <CategoryBadge category={cat} />
@@ -122,17 +145,19 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Grid */}
-      {filtered.length === 0 ? (
+      {/* Loading skeleton */}
+      {!dbReady ? (
+        <div className={styles.loadingGrid}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className={styles.skeleton} />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
         <EmptyState />
       ) : (
         <div className={styles.grid}>
           {filtered.map((listing) => (
-            <ListingCard
-              key={listing.id}
-              listing={listing}
-              onDelete={handleDelete}
-            />
+            <ListingCard key={listing.id} listing={listing} onDelete={handleDelete} />
           ))}
         </div>
       )}

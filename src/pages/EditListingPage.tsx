@@ -26,12 +26,15 @@ export default function EditListingPage() {
     );
   }
 
-  const handleSubmit = (values: ListingFormValues) => {
+  const handleSubmit = async (values: ListingFormValues) => {
     if (!id) return;
     setLoading(true);
-    updateListing(id, values);
-    setLoading(false);
-    navigate('/dashboard');
+    try {
+      await updateListing(id, values);
+      navigate('/dashboard');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

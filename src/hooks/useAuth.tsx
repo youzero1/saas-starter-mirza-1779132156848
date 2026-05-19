@@ -1,10 +1,12 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import type { User, AuthState } from '@/types';
+import { dbGet, dbPut, dbCount, USERS_STORE } from '@/lib/db';
+import { generateId } from '@/lib/utils';
 
-const STORAGE_KEY = 'jb_auth_user';
+const STORAGE_KEY = 'jb_auth_user_id';
 
-const MOCK_USERS: User[] = [
+const SEED_USERS: User[] = [
   { id: '1', name: 'Alice Johnson', email: 'alice@company.com', avatar: 'AJ' },
   { id: '2', name: 'Bob Smith', email: 'bob@company.com', avatar: 'BS' },
   { id: '3', name: 'Carol White', email: 'carol@company.com', avatar: 'CW' },
@@ -17,6 +19,15 @@ type AuthContextType = AuthState & {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+async function seedUsers() {
+  const count = await dbCount(USERS_STORE);
+  if (count === 0) {
+    for (const u of SEED_USERS) {
+      await dbPut<User>(USERS_STORE, u);
+    }
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
@@ -24,31 +35,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
+    let cancelled = false;
+
+    async function init() {
       try {
-        const user = JSON.parse(stored) as User;
-        setAuthState({ user, isAuthenticated: true });
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
+        await seedUsers();
+
+        const storedId = localStorage.getItem(STORAGE_KEY);
+        if (storedId) {
+          const user = await dbGet<User>(USERS_STORE, storedId);
+          if (!cancelled && user) {
+            setAuthState({ user, isAuthenticated: true });
+          }
+        }
+      } catch (err) {
+        console.error('[DB] auth init error', err);
       }
     }
+
+    init();
+    return () => { cancelled = true; };
   }, []);
 
-  const login = async (email: string, _password: string): Promise<boolean> => {
-    const user = MOCK_USERS.find((u) => u.email === email);
-    if (user) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-      setAuthState({ user, isAuthenticated: true });
-      return true;
-    }
-    return false;
-  };
+  const login = useCallback(
+    async (email: string, _password: string): Promise<boolean> => {
+      try {
+        // Search all users for matching email
+        const db = await import('@/lib/db');
+        const allUsers = await db.dbGetAll<User>(USERS_STORE);
+        const user = allUsers.find((u) => u.email === email);
+        if (user) {
+          localStorage.setItem(STORAGE_KEY, user.id);
+          setAuthState({ user, isAuthenticated: true });
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error('[DB] login error', err);
+        return false;
+      }
+    },
+    []
+  );
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     setAuthState({ user: null, isAuthenticated: false });
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ ...authState, login, logout }}>
@@ -62,3 +95,6 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
+// Keep generateId accessible for future user creation flows
+export { generateId };

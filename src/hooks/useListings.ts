@@ -1,8 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { JobListing, JobCategory } from '@/types';
 import { generateId, nowISO } from '@/lib/utils';
-
-const STORAGE_KEY = 'jb_listings';
+import {
+  dbGetAll,
+  dbGet,
+  dbPut,
+  dbDelete,
+  dbCount,
+  LISTINGS_STORE,
+} from '@/lib/db';
 
 const SEED_LISTINGS: JobListing[] = [
   {
@@ -13,8 +19,10 @@ const SEED_LISTINGS: JobListing[] = [
     type: 'Full-time',
     status: 'Open',
     location: 'Remote',
-    description: 'We are looking for a seasoned frontend engineer to join our product team and build world-class interfaces.',
-    requirements: '5+ years of experience with React, TypeScript proficiency, attention to detail.',
+    description:
+      'We are looking for a seasoned frontend engineer to join our product team and build world-class interfaces.',
+    requirements:
+      '5+ years of experience with React, TypeScript proficiency, attention to detail.',
     salary: '$120,000 – $150,000',
     createdBy: 'Alice Johnson',
     createdAt: '2024-11-01T09:00:00Z',
@@ -29,7 +37,8 @@ const SEED_LISTINGS: JobListing[] = [
     status: 'Open',
     location: 'New York, NY',
     description: 'Join our design team to craft beautiful, user-centered products.',
-    requirements: 'Experience with Figma, strong portfolio, knowledge of design systems.',
+    requirements:
+      'Experience with Figma, strong portfolio, knowledge of design systems.',
     salary: '$90,000 – $115,000',
     createdBy: 'Bob Smith',
     createdAt: '2024-11-05T11:00:00Z',
@@ -44,7 +53,8 @@ const SEED_LISTINGS: JobListing[] = [
     status: 'Open',
     location: 'San Francisco, CA',
     description: 'Lead our growth initiatives across paid and organic channels.',
-    requirements: '3+ years in growth marketing, data-driven mindset, SaaS experience preferred.',
+    requirements:
+      '3+ years in growth marketing, data-driven mindset, SaaS experience preferred.',
     salary: '$85,000 – $105,000',
     createdBy: 'Carol White',
     createdAt: '2024-11-10T14:00:00Z',
@@ -58,7 +68,8 @@ const SEED_LISTINGS: JobListing[] = [
     type: 'Full-time',
     status: 'Draft',
     location: 'Chicago, IL',
-    description: 'Drive outbound prospecting and qualify new business opportunities.',
+    description:
+      'Drive outbound prospecting and qualify new business opportunities.',
     requirements: '1–2 years SDR experience, excellent communication skills.',
     salary: '$55,000 – $70,000 + commission',
     createdBy: 'Alice Johnson',
@@ -73,7 +84,8 @@ const SEED_LISTINGS: JobListing[] = [
     type: 'Full-time',
     status: 'Closed',
     location: 'Austin, TX',
-    description: 'Partner with business leaders to drive talent strategy and employee experience.',
+    description:
+      'Partner with business leaders to drive talent strategy and employee experience.',
     requirements: '4+ years in HR or people ops, SHRM certification a plus.',
     salary: '$80,000 – $100,000',
     createdBy: 'Bob Smith',
@@ -82,72 +94,111 @@ const SEED_LISTINGS: JobListing[] = [
   },
 ];
 
-function loadFromStorage(): JobListing[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as JobListing[];
-  } catch {
-    // ignore
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_LISTINGS));
-  return SEED_LISTINGS;
-}
-
-function saveToStorage(listings: JobListing[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(listings));
-}
-
 export type CreateListingInput = Omit<JobListing, 'id' | 'createdAt' | 'updatedAt'>;
 export type UpdateListingInput = Partial<Omit<JobListing, 'id' | 'createdAt' | 'createdBy'>>;
 
 export function useListings() {
   const [listings, setListings] = useState<JobListing[]>([]);
+  const [dbReady, setDbReady] = useState(false);
 
+  // Load all listings from IndexedDB on mount; seed if empty
   useEffect(() => {
-    setListings(loadFromStorage());
+    let cancelled = false;
+
+    async function init() {
+      try {
+        const count = await dbCount(LISTINGS_STORE);
+
+        if (count === 0) {
+          // Seed the database
+          for (const listing of SEED_LISTINGS) {
+            await dbPut<JobListing>(LISTINGS_STORE, listing);
+          }
+        }
+
+        const all = await dbGetAll<JobListing>(LISTINGS_STORE);
+        // Sort newest first
+        all.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+
+        if (!cancelled) {
+          setListings(all);
+          setDbReady(true);
+        }
+      } catch (err) {
+        console.error('[DB] init error', err);
+        if (!cancelled) setDbReady(true);
+      }
+    }
+
+    init();
+    return () => { cancelled = true; };
   }, []);
 
-  const createListing = (input: CreateListingInput): JobListing => {
-    const now = nowISO();
-    const newListing: JobListing = {
-      ...input,
-      id: generateId(),
-      createdAt: now,
-      updatedAt: now,
-    };
-    const updated = [newListing, ...listings];
-    saveToStorage(updated);
-    setListings(updated);
-    return newListing;
-  };
-
-  const updateListing = (id: string, input: UpdateListingInput): boolean => {
-    const idx = listings.findIndex((l) => l.id === id);
-    if (idx === -1) return false;
-    const updated = listings.map((l) =>
-      l.id === id ? { ...l, ...input, updatedAt: nowISO() } : l
+  const refresh = useCallback(async () => {
+    const all = await dbGetAll<JobListing>(LISTINGS_STORE);
+    all.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-    saveToStorage(updated);
-    setListings(updated);
-    return true;
-  };
+    setListings(all);
+  }, []);
 
-  const deleteListing = (id: string): boolean => {
-    const updated = listings.filter((l) => l.id !== id);
-    if (updated.length === listings.length) return false;
-    saveToStorage(updated);
-    setListings(updated);
-    return true;
-  };
+  const createListing = useCallback(
+    async (input: CreateListingInput): Promise<JobListing> => {
+      const now = nowISO();
+      const newListing: JobListing = {
+        ...input,
+        id: generateId(),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await dbPut<JobListing>(LISTINGS_STORE, newListing);
+      await refresh();
+      return newListing;
+    },
+    [refresh]
+  );
 
-  const getListingById = (id: string): JobListing | undefined =>
-    listings.find((l) => l.id === id);
+  const updateListing = useCallback(
+    async (id: string, input: UpdateListingInput): Promise<boolean> => {
+      const existing = await dbGet<JobListing>(LISTINGS_STORE, id);
+      if (!existing) return false;
+      const updated: JobListing = { ...existing, ...input, updatedAt: nowISO() };
+      await dbPut<JobListing>(LISTINGS_STORE, updated);
+      await refresh();
+      return true;
+    },
+    [refresh]
+  );
 
-  const getByCategory = (category: JobCategory): JobListing[] =>
-    listings.filter((l) => l.category === category);
+  const deleteListing = useCallback(
+    async (id: string): Promise<boolean> => {
+      const existing = await dbGet<JobListing>(LISTINGS_STORE, id);
+      if (!existing) return false;
+      await dbDelete(LISTINGS_STORE, id);
+      await refresh();
+      return true;
+    },
+    [refresh]
+  );
+
+  const getListingById = useCallback(
+    (id: string): JobListing | undefined => listings.find((l) => l.id === id),
+    [listings]
+  );
+
+  const getByCategory = useCallback(
+    (category: JobCategory): JobListing[] =>
+      listings.filter((l) => l.category === category),
+    [listings]
+  );
 
   return {
     listings,
+    dbReady,
     createListing,
     updateListing,
     deleteListing,
